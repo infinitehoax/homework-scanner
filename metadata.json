@@ -1,0 +1,6 @@
+{
+  "name": "Homework Scanner",
+  "description": "Scan, solve, and understand homework assignments in seconds using Gemini 3.5 Flash. Support for all subjects, historic saves, and step-by-step guidance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
