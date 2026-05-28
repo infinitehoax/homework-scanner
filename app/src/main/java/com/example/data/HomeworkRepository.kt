@@ -69,6 +69,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         imageBase64: String?,
         imageUrl: String?,
         videoUrl: String?,
+        audioUrl: String? = null,
         apiKey: String,
         tutorPersonality: String = "Balanced Tutor",
         explanationComplexity: String = "Detailed Step-by-Step"
@@ -131,6 +132,21 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
                 }
             }
         }
+
+        // Include the audio inline if provided natively
+        if (audioUrl != null) {
+            val audioFile = java.io.File(audioUrl)
+            if (audioFile.exists()) {
+                try {
+                    val bytes = audioFile.readBytes()
+                    val audioBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    promptParts.add(Part(inlineData = InlineData(mimeType = "audio/mp4", data = audioBase64)))
+                } catch (e: Throwable) {
+                    Log.e("HomeworkRepository", "Failed to encode audio for Gemini request", e)
+                    throw Exception("Audio is too large to be processed inline.", e)
+                }
+            }
+        }
         
         // Include the image context if uploaded (fallback if no video or as primary image)
         if (imageBase64 != null) {
@@ -161,6 +177,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
                 questionText = questionText.ifEmpty { "Scanned assignment" },
                 imageUrl = imageUrl,
                 videoUrl = videoUrl,
+                audioUrl = audioUrl,
                 solutionText = answerText,
                 timestamp = System.currentTimeMillis()
             )

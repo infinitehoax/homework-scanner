@@ -10,6 +10,7 @@ data class HomeworkEntity(
     val questionText: String,
     val imageUrl: String? = null,
     val videoUrl: String? = null,
+    val audioUrl: String? = null,
     val solutionText: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isFavorite: Boolean = false,

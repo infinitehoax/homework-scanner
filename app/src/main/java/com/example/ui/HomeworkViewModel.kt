@@ -91,7 +91,8 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
         subject: String,
         questionText: String,
         imageUri: Uri?,
-        videoUri: Uri? = null
+        videoUri: Uri? = null,
+        audioPath: String? = null
     ) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -180,6 +181,7 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                     imageBase64 = imageBase64,
                     imageUrl = localImagePath,
                     videoUrl = localVideoPath,
+                    audioUrl = audioPath,
                     apiKey = getActiveApiKey(),
                     tutorPersonality = _tutorPersonality.value,
                     explanationComplexity = _explanationComplexity.value

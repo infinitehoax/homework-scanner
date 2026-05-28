@@ -528,6 +528,29 @@ fun ScannerTab(
     
     // Captured video Uri state
     var videoUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Recorded audio file state
+    var audioFile by remember { mutableStateOf<java.io.File?>(null) }
+    val audioRecorder = remember(context) { AudioRecorder(context) }
+    var isRecordingAudio by remember { mutableStateOf(false) }
+    
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val file = audioRecorder.startRecording()
+            if (file != null) {
+                isRecordingAudio = true
+                audioFile = file
+                videoUri = null
+                imageUri = null
+            } else {
+                Toast.makeText(context, "Failed to start recording", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Microphone permission is required to record explanations.", Toast.LENGTH_SHORT).show()
+        }
+    }
     
     // We create files to receive captures
     val tempFilePair = remember(context) { 
@@ -811,6 +834,105 @@ fun ScannerTab(
                     }
                 }
 
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                Text(
+                    "Or Teach with Voice Explanations",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            if (isRecordingAudio) {
+                                val file = audioRecorder.stopRecording()
+                                isRecordingAudio = false
+                                if (file != null && file.exists()) {
+                                    audioFile = file
+                                    videoUri = null
+                                    imageUri = null
+                                }
+                            } else {
+                                val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.RECORD_AUDIO
+                                )
+                                if (permissionCheck == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                    val file = audioRecorder.startRecording()
+                                    if (file != null) {
+                                        isRecordingAudio = true
+                                        audioFile = file
+                                        videoUri = null
+                                        imageUri = null
+                                    } else {
+                                        Toast.makeText(context, "Failed to start recording", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("audio_record_toggle_button"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+                        )
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
+                                contentDescription = if (isRecordingAudio) "Stop Voice" else "Voice Input"
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isRecordingAudio) "Recording Audio... Tap to Stop" else "Record Voice Explanation",
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                if (audioFile != null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Mic, "Voice Attached", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(32.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Voice memo loaded", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("Raw audio will be analyzed directly", fontSize = 11.sp, color = Color.Gray)
+                                }
+                            }
+                            IconButton(
+                                onClick = { audioFile = null },
+                                modifier = Modifier.testTag("delete_selected_audio")
+                            ) {
+                                Icon(Icons.Default.Close, "Remove Voice")
+                            }
+                        }
+                    }
+                }
+
                 if (videoUri != null) {
                     Card(
                         modifier = Modifier
@@ -887,7 +1009,8 @@ fun ScannerTab(
                     subject = selectedSubject,
                     questionText = questionText,
                     imageUri = imageUri,
-                    videoUri = videoUri
+                    videoUri = videoUri,
+                    audioPath = audioFile?.absolutePath
                 )
                 onSolveTriggered()
             },
@@ -1730,15 +1853,13 @@ fun generateMathHtml(
                         }
 
                         const rawContent = decodeBase64Utf8(b64Content);
-                        
-                        // 1. PRE-PROCESS: Extract math blocks to protect them from Marked markdown interpretation
+                                               // 1. PRE-PROCESS: Extract math blocks to protect them from Marked markdown interpretation
                         const mathBlocks = [];
                         const mathRegex = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\$[^$\n]+?\$|\\\(.*?\\\))/g;
                         
                         const safeText = rawContent.replace(mathRegex, function(match) {
                             mathBlocks.push(match);
-                            // Standard placeholder text with no underscores or special formatting characters
-                            return "MATHPLACEHOLDER" + (mathBlocks.length - 1) + "XYZ";
+                            return "MATH_INLINE_" + (mathBlocks.length - 1);
                         });
                         
                         // 2. PARSE MARKDOWN WITH MARKED
@@ -1752,7 +1873,7 @@ fun generateMathHtml(
                         }
                         
                         // 3. POST-PROCESS: Place original math equations back into HTML
-                        const restoredHtml = htmlContent.replace(/MATHPLACEHOLDER(\d+)XYZ/g, function(match, index) {
+                        const restoredHtml = htmlContent.replace(/MATH_INLINE_(\d+)/g, function(match, index) {
                             return mathBlocks[parseInt(index, 10)];
                         });
                         
@@ -1853,6 +1974,22 @@ fun LaTeXWebView(
                 
                 isVerticalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
+
+                // Prevent parents from stealing scroll touch events from the WebView
+                @android.annotation.SuppressLint("ClickableViewAccessibility")
+                setOnTouchListener { view, event ->
+                    when (event.action) {
+                        android.view.MotionEvent.ACTION_DOWN,
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            view.parent.requestDisallowInterceptTouchEvent(true)
+                        }
+                        android.view.MotionEvent.ACTION_UP,
+                        android.view.MotionEvent.ACTION_CANCEL -> {
+                            view.parent.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+                    false
+                }
                 
                 addJavascriptInterface(object {
                     @JavascriptInterface
