@@ -114,8 +114,7 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
     val errorMessage by viewModel.errorMessage.collectAsState()
     val userApiKey by viewModel.userApiKey.collectAsState()
 
-    var activeTab by remember { mutableStateOf(0) } // 0 = Scan & Solver, 1 = Solution View, 2 = History
-    var showSettingsDialog by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf(0) } // 0 = Scan & Solver, 1 = Solution View, 2 = History, 3 = Settings
 
     // If a solution gets solved successfully, automatically navigate to Tab 1 (Solution view)
     LaunchedEffect(currentSolution) {
@@ -149,7 +148,7 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                 },
                 actions = {
                     IconButton(
-                        onClick = { showSettingsDialog = true },
+                        onClick = { activeTab = 3 },
                         modifier = Modifier.testTag("preferences_settings_button")
                     ) {
                         Icon(
@@ -198,6 +197,13 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                     label = { Text("Saves") },
                     modifier = Modifier.testTag("tab_saves")
                 )
+                NavigationBarItem(
+                    selected = activeTab == 3,
+                    onClick = { activeTab = 3 },
+                    icon = { Icon(Icons.Default.Settings, "Settings & Logs") },
+                    label = { Text("Settings") },
+                    modifier = Modifier.testTag("tab_settings")
+                )
             }
         }
     ) { innerPadding ->
@@ -238,6 +244,9 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                             viewModel.selectSolution(it)
                             activeTab = 1
                         }
+                    )
+                    3 -> SettingsAndLogsScreen(
+                        viewModel = viewModel
                     )
                 }
             }
@@ -301,7 +310,7 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                         shape = RoundedCornerShape(12.dp),
-                        onClick = { showSettingsDialog = true }
+                        onClick = { activeTab = 3 }
                     ) {
                         Row(
                             modifier = Modifier
@@ -339,190 +348,6 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                 }
             }
         }
-    }
-
-    // Dialog for active preferences setup and tutor tuning
-    if (showSettingsDialog) {
-        val currentPersonality by viewModel.tutorPersonality.collectAsState()
-        val currentComplexity by viewModel.explanationComplexity.collectAsState()
-        var tempKeyText by remember { mutableStateOf(userApiKey) }
-        var showResetConfirmation by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { showSettingsDialog = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Settings, "Pref Settings", tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("PrepAlly Preferences", style = MaterialTheme.typography.titleMedium)
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        "Tweak your AI tutor parameters to fit your custom learning preferences.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-
-                    HorizontalDivider()
-
-                    // Selection 1: Tutor Personality Selection
-                    Text(
-                        "Tutor Persona Style",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    
-                    val personalities = listOf("Balanced Tutor", "Socratic Guide", "Strict Examiner", "Casual Buddy")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        personalities.forEach { p ->
-                            val isSelected = currentPersonality == p
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { viewModel.updatePersonality(p) },
-                                label = { Text(p, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = Color.White
-                                )
-                            )
-                        }
-                    }
-
-                    // Selection 2: Complexity Detail
-                    Text(
-                        "Explanation Complexity",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    
-                    val complexities = listOf("Detailed Step-by-Step", "Focus Formulas", "Quick Cheat Sheet")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        complexities.forEach { c ->
-                            val isSelected = currentComplexity == c
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { viewModel.updateComplexity(c) },
-                                label = { Text(c, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = Color.White
-                                )
-                            )
-                        }
-                    }
-
-                    HorizontalDivider()
-
-                    // Key setup input
-                    Text(
-                        "Gemini API Secret",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                    OutlinedTextField(
-                        value = tempKeyText,
-                        onValueChange = { tempKeyText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("api_key_text_input"),
-                        placeholder = { Text("AIzaSy...") },
-                        singleLine = true,
-                        label = { Text("Enter secret override") }
-                    )
-
-                    HorizontalDivider()
-
-                    // Destructive wipe sweeps
-                    if (!showResetConfirmation) {
-                        OutlinedButton(
-                            onClick = { showResetConfirmation = true },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("clear_all_history_trigger")
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.DeleteSweep, "Sweep")
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Wipe All Tutoring Saves", fontSize = 11.sp)
-                            }
-                        }
-                    } else {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                                .padding(8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                "Delete alright? This will clean all offline homework records irreversibly.",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.error,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                TextButton(onClick = { showResetConfirmation = false }) {
-                                    Text("Cancel", fontSize = 11.sp)
-                                }
-                                Button(
-                                    onClick = {
-                                        viewModel.clearAllHistory()
-                                        showResetConfirmation = false
-                                        Toast.makeText(context, "Saves wiped cleanly!", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Text("Yes, Delete All", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.updateApiKey(tempKeyText.trim())
-                        showSettingsDialog = false
-                    },
-                    modifier = Modifier.testTag("api_key_save_button")
-                ) {
-                    Text("Save preferences")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSettingsDialog = false }) {
-                    Text("Dismiss")
-                }
-            }
-        )
     }
 }
 

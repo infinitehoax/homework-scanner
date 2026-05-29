@@ -180,11 +180,17 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         )
 
         try {
+            com.example.util.ApiLogger.info("API_REQUEST", "Sending request to Gemini model: gemini-3.5-flash with ${promptParts.size} parts.")
+            val requestStartTime = System.currentTimeMillis()
+
             val response = RetrofitClient.service.generateContent(
                 model = "gemini-3.5-flash",
                 apiKey = finalApiKey,
                 request = request
             )
+            
+            val duration = System.currentTimeMillis() - requestStartTime
+            com.example.util.ApiLogger.info("API_RESPONSE", "Received successful response in ${duration}ms")
 
             val answerText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 ?: throw Exception("The AI could not generate an answer. The prompt may have been blocked by safety filters.")
@@ -203,6 +209,8 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         } catch (e: HttpException) {
             val errorBody = e.response()?.errorBody()?.string()
             Log.e("HomeworkRepository", "API HTTP Error: $errorBody", e)
+            com.example.util.ApiLogger.error("API_HTTP_ERROR", "HTTP code ${e.code()}", errorBody ?: e.message())
+            
             var readableMessage = "Server code ${e.code()}"
             try {
                 if (!errorBody.isNullOrBlank()) {
@@ -212,6 +220,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
             throw Exception(readableMessage)
         } catch (e: Exception) {
             Log.e("HomeworkRepository", "Error solving homework", e)
+            com.example.util.ApiLogger.error("API_NETWORK_ERROR", e.localizedMessage ?: "Unknown network error", e.stackTraceToString())
             throw Exception(e.localizedMessage ?: "Unknown network error occurred.")
         }
     }
