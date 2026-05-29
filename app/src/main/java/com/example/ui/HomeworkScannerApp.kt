@@ -110,6 +110,7 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
     val context = LocalContext.current
     val currentSolution by viewModel.currentSolution.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val queueStatus by viewModel.queueStatus.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val userApiKey by viewModel.userApiKey.collectAsState()
 
@@ -246,11 +247,11 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.4f)),
+                        .background(Color.Black.copy(alpha = 0.5f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Card(
-                        modifier = Modifier.padding(24.dp),
+                        modifier = Modifier.padding(24.dp).fillMaxWidth(0.9f),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
@@ -262,17 +263,28 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                             CircularProgressIndicator(modifier = Modifier.testTag("global_loading_spinner"))
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                "AI Tutor analyzing homework...",
+                                if (queueStatus != null) "Queue Retry Active" else "AI Tutor analyzing homework...",
                                 fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodyLarge
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Gemini 3.5 Flash formulating explanations",
-                                color = Color.Gray,
+                                text = queueStatus ?: "Gemini 3.5 Flash formulating explanations",
+                                color = if (queueStatus != null) MaterialTheme.colorScheme.error else Color.Gray,
                                 fontSize = 12.sp,
                                 textAlign = TextAlign.Center
                             )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            TextButton(
+                                onClick = { viewModel.cancelActiveRequest() },
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Cancel, contentDescription = "Cancel Request")
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Cancel Request", fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 }
@@ -533,6 +545,13 @@ fun ScannerTab(
     var audioFile by remember { mutableStateOf<java.io.File?>(null) }
     val audioRecorder = remember(context) { AudioRecorder(context) }
     var isRecordingAudio by remember { mutableStateOf(false) }
+    val audioPlayer = remember(context) { AudioPlayer(context) }
+    var isPlayingAudioPreview by remember { mutableStateOf(false) }
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
+
+    DisposableEffect(Unit) {
+        onDispose { audioPlayer.stop() }
+    }
     
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -851,6 +870,9 @@ fun ScannerTab(
                 ) {
                     Button(
                         onClick = {
+                            try {
+                                hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            } catch (e: Exception) {}
                             if (isRecordingAudio) {
                                 val file = audioRecorder.stopRecording()
                                 isRecordingAudio = false
@@ -915,19 +937,70 @@ fun ScannerTab(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Mic, "Voice Attached", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(32.dp))
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Voice Attached",
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(32.dp)
+                                )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text("Voice memo loaded", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    Text("Raw audio will be analyzed directly", fontSize = 11.sp, color = Color.Gray)
+                                    Text(
+                                        text = if (isPlayingAudioPreview) "Playing preview..." else "Ready to analyze directly",
+                                        fontSize = 11.sp,
+                                        color = if (isPlayingAudioPreview) MaterialTheme.colorScheme.primary else Color.Gray
+                                    )
                                 }
                             }
-                            IconButton(
-                                onClick = { audioFile = null },
-                                modifier = Modifier.testTag("delete_selected_audio")
-                            ) {
-                                Icon(Icons.Default.Close, "Remove Voice")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Play Preview Toggle button
+                                IconButton(
+                                    onClick = {
+                                        try {
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        } catch (e: Exception) {}
+                                        if (isPlayingAudioPreview) {
+                                            audioPlayer.stop()
+                                            isPlayingAudioPreview = false
+                                        } else {
+                                            audioFile?.let { file ->
+                                                isPlayingAudioPreview = true
+                                                audioPlayer.playFile(file) {
+                                                    isPlayingAudioPreview = false
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("preview_audio_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlayingAudioPreview) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = "Preview Voice Recording",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.width(4.dp))
+                                
+                                // Trash/Remove button
+                                IconButton(
+                                    onClick = {
+                                        try {
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        } catch (e: Exception) {}
+                                        audioPlayer.stop()
+                                        isPlayingAudioPreview = false
+                                        audioFile = null
+                                    },
+                                    modifier = Modifier.testTag("delete_selected_audio")
+                                ) {
+                                    Icon(Icons.Default.Close, "Remove Voice")
+                                }
                             }
                         }
                     }
@@ -1949,6 +2022,10 @@ fun LaTeXWebView(
     AndroidView(
         factory = { ctx ->
             WebView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
                 // Enable web view debugging so developers can inspect inside Chrome DevTools via USB / local emulator
                 WebView.setWebContentsDebuggingEnabled(true)
 

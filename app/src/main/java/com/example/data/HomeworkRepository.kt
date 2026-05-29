@@ -1,6 +1,8 @@
 package com.example.data
 
 import android.util.Log
+import retrofit2.HttpException
+import org.json.JSONObject
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -118,17 +120,22 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
 
         val promptParts = mutableListOf<Part>()
         
+        val maxInlineBytes = 15 * 1024 * 1024 // 15 MB limit for JSON inline data
+        
         // Include the video inline if provided natively
         if (videoUrl != null) {
             val videoFile = java.io.File(videoUrl)
             if (videoFile.exists()) {
+                if (videoFile.length() > maxInlineBytes) {
+                    throw Exception("Video is too large. Please record a shorter video (under 15MB).")
+                }
                 try {
                     val bytes = videoFile.readBytes()
                     val videoBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                     promptParts.add(Part(inlineData = InlineData(mimeType = "video/mp4", data = videoBase64)))
                 } catch (e: Throwable) {
                     Log.e("HomeworkRepository", "Failed to encode video for Gemini request", e)
-                    throw Exception("Video is too large to be processed inline.", e)
+                    throw Exception("Failed to process video.", e)
                 }
             }
         }
@@ -137,13 +144,16 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         if (audioUrl != null) {
             val audioFile = java.io.File(audioUrl)
             if (audioFile.exists()) {
+                if (audioFile.length() > maxInlineBytes) {
+                    throw Exception("Audio recording is too long. Please keep it under 15MB.")
+                }
                 try {
                     val bytes = audioFile.readBytes()
                     val audioBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                     promptParts.add(Part(inlineData = InlineData(mimeType = "audio/mp4", data = audioBase64)))
                 } catch (e: Throwable) {
                     Log.e("HomeworkRepository", "Failed to encode audio for Gemini request", e)
-                    throw Exception("Audio is too large to be processed inline.", e)
+                    throw Exception("Failed to process audio.", e)
                 }
             }
         }
@@ -154,7 +164,14 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         }
 
         // Include the text query
-        val textPrompt = "$subjectPromptSnippet\n\nQuestion:\n$questionText"
+        val qText = questionText.ifBlank {
+            if (audioUrl != null) {
+                "Please listen to the attached voice explanation and solve/explain the assignment step-by-step."
+            } else {
+                "Scanned or attached assignment"
+            }
+        }
+        val textPrompt = "$subjectPromptSnippet\n\nQuestion:\n$qText"
         promptParts.add(Part(text = textPrompt))
 
         val request = GeminiRequest(
@@ -170,7 +187,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
             )
 
             val answerText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "Sorry, Gemini 3.5 Flash was unable to generate a solution for this. Please check the assignment detail and try again."
+                ?: throw Exception("The AI could not generate an answer. The prompt may have been blocked by safety filters.")
 
             val entity = HomeworkEntity(
                 subject = subject,
@@ -183,9 +200,19 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
             )
 
             entity
+        } catch (e: HttpException) {
+            val errorBody = e.response()?.errorBody()?.string()
+            Log.e("HomeworkRepository", "API HTTP Error: $errorBody", e)
+            var readableMessage = "Server code ${e.code()}"
+            try {
+                if (!errorBody.isNullOrBlank()) {
+                    readableMessage = JSONObject(errorBody).getJSONObject("error").getString("message")
+                }
+            } catch (parseEx: Exception) { /* Fallback to standard message */ }
+            throw Exception(readableMessage)
         } catch (e: Exception) {
             Log.e("HomeworkRepository", "Error solving homework", e)
-            throw e
+            throw Exception(e.localizedMessage ?: "Unknown network error occurred.")
         }
     }
 

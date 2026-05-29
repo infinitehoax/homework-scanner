@@ -13,6 +13,9 @@ import com.example.BuildConfig
 import com.example.data.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -87,6 +90,18 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
         _errorMessage.value = null
     }
 
+    private var activeApiJob: Job? = null
+
+    private val _queueStatus = MutableStateFlow<String?>(null)
+    val queueStatus: StateFlow<String?> = _queueStatus.asStateFlow()
+
+    fun cancelActiveRequest() {
+        activeApiJob?.cancel()
+        _isLoading.value = false
+        _queueStatus.value = null
+        _errorMessage.value = "Request manually cancelled."
+    }
+
     fun solveHomework(
         subject: String,
         questionText: String,
@@ -94,9 +109,11 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
         videoUri: Uri? = null,
         audioPath: String? = null
     ) {
-        viewModelScope.launch {
+        activeApiJob?.cancel()
+        activeApiJob = viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
+            _queueStatus.value = null
             try {
                 var imageBase64: String? = null
                 var localImagePath: String? = null
@@ -169,34 +186,60 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
 
-                if (questionText.trim().isEmpty() && imageBase64 == null) {
-                    _errorMessage.value = "Please provide an assignment question, attach a photo, or record a video homework description."
+                if (questionText.trim().isEmpty() && imageBase64 == null && audioPath == null) {
+                    _errorMessage.value = "Please provide an assignment question, attach a photo, record a video, or record a voice explanation."
                     _isLoading.value = false
                     return@launch
                 }
 
-                val resultEntity = repository.solveHomework(
-                    subject = subject,
-                    questionText = questionText,
-                    imageBase64 = imageBase64,
-                    imageUrl = localImagePath,
-                    videoUrl = localVideoPath,
-                    audioUrl = audioPath,
-                    apiKey = getActiveApiKey(),
-                    tutorPersonality = _tutorPersonality.value,
-                    explanationComplexity = _explanationComplexity.value
-                )
+                var attempt = 1
+                var isSuccess = false
+                val maxRetries = 10
 
-                // Save result to Room Database
-                val solvedId = repository.saveSolution(resultEntity)
-                val savedEntity = resultEntity.copy(id = solvedId)
+                while (isActive && !isSuccess && attempt <= maxRetries) {
+                    try {
+                        val resultEntity = repository.solveHomework(
+                            subject = subject,
+                            questionText = questionText,
+                            imageBase64 = imageBase64,
+                            imageUrl = localImagePath,
+                            videoUrl = localVideoPath,
+                            audioUrl = audioPath,
+                            apiKey = getActiveApiKey(),
+                            tutorPersonality = _tutorPersonality.value,
+                            explanationComplexity = _explanationComplexity.value
+                        )
 
-                _currentSolution.value = savedEntity
+                        // Save result to Room Database
+                        val solvedId = repository.saveSolution(resultEntity)
+                        val savedEntity = resultEntity.copy(id = solvedId)
+
+                        _currentSolution.value = savedEntity
+                        isSuccess = true
+                    } catch (e: Exception) {
+                        val errorMsg = e.localizedMessage ?: e.message ?: ""
+                        if (errorMsg.contains("429") || errorMsg.contains("quota", ignoreCase = true) || errorMsg.contains("rate limit", ignoreCase = true)) {
+                            val delaySeconds = (2 * attempt).coerceAtMost(10)
+                            _queueStatus.value = "Server busy. Retrying in ${delaySeconds}s... (Attempt $attempt)"
+                            delay(delaySeconds * 1000L)
+                            attempt++
+                        } else {
+                            _errorMessage.value = "Server error: $errorMsg"
+                            break
+                        }
+                    }
+                }
+
+                if (!isSuccess && attempt > maxRetries) {
+                    _errorMessage.value = "Failed after $maxRetries attempts. Please try again later."
+                }
+
             } catch (e: Throwable) {
                 Log.e("HomeworkViewModel", "Failed to solve homework", e)
                 _errorMessage.value = "Error: Video may be too large, or network failed. Details: ${e.localizedMessage ?: e.message}"
             } finally {
                 _isLoading.value = false
+                _queueStatus.value = null
             }
         }
     }
