@@ -116,13 +116,6 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
 
     var activeTab by remember { mutableStateOf(0) } // 0 = Scan & Solver, 1 = Solution View, 2 = History, 3 = Settings
 
-    // If a solution gets solved successfully, automatically navigate to Tab 1 (Solution view)
-    LaunchedEffect(currentSolution) {
-        if (currentSolution != null) {
-            activeTab = 1
-        }
-    }
-
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -147,6 +140,13 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                     }
                 },
                 actions = {
+                    val activeScans by viewModel.activeScans.collectAsState()
+                    if (activeScans.isNotEmpty()) {
+                        Badge(containerColor = MaterialTheme.colorScheme.primary) { 
+                            Text("${activeScans.size}", color = Color.White) 
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     IconButton(
                         onClick = { activeTab = 3 },
                         modifier = Modifier.testTag("preferences_settings_button")
@@ -251,54 +251,6 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                 }
             }
 
-            // Global Overlay loading spinner
-            if (isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Card(
-                        modifier = Modifier.padding(24.dp).fillMaxWidth(0.9f),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.testTag("global_loading_spinner"))
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                if (queueStatus != null) "Queue Retry Active" else "AI Tutor analyzing homework...",
-                                fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = queueStatus ?: "Gemini 3.5 Flash formulating explanations",
-                                color = if (queueStatus != null) MaterialTheme.colorScheme.error else Color.Gray,
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            TextButton(
-                                onClick = { viewModel.cancelActiveRequest() },
-                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Cancel, contentDescription = "Cancel Request")
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Cancel Request", fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // API warning alert when keys aren't loaded in Gemini 
             if (!viewModel.isApiKeyAvailable() && activeTab == 0) {
                 Box(
@@ -327,7 +279,7 @@ fun HomeworkScannerApp(viewModel: HomeworkViewModel = viewModel()) {
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1.5f)) {
                                 Text(
-                                    "Gemini API Secret is missing",
+                                    "Relay API Secret is missing",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onErrorContainer
@@ -1370,6 +1322,7 @@ fun SavesTab(
     onSolutionSelected: (HomeworkEntity) -> Unit
 ) {
     val solutions by viewModel.allSolutions.collectAsState()
+    val activeScans by viewModel.activeScans.collectAsState()
     var filterOnlyFavorites by remember { mutableStateOf(false) }
 
     val filteredSolutions = remember(solutions, filterOnlyFavorites) {
@@ -1391,12 +1344,12 @@ fun SavesTab(
         ) {
             Column {
                 Text(
-                    "Tutoring Lab Saves",
+                    "Tutoring Lab Saves & Scans",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Browse saved explanations and follow-ups",
+                    "Browse queue or saved explanations",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -1414,48 +1367,95 @@ fun SavesTab(
                 )
             }
         }
-
-        if (filteredSolutions.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = if (filterOnlyFavorites) Icons.Default.FavoriteBorder else Icons.Default.HistoryEdu,
-                        contentDescription = "Book empty state",
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.primaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = if (filterOnlyFavorites) "No favorited saves matches" else "No saved homeworks yet",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = if (filterOnlyFavorites) "Study solutions and favorite important answers to find them here easily." else "Go back to scan, input coding or general assignments and find summaries preserved here.",
-                        fontSize = 12.sp,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+        
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 80.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            
+            if (activeScans.isNotEmpty()) {
+                item {
+                    Text("Active Processing Scans", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+                }
+                
+                items(activeScans, key = { it.id }) { scan ->
+                    val status by scan.status.collectAsState()
+                    val isError by scan.isError.collectAsState()
+                    
+                    Card(
+                        modifier = Modifier.fillMaxWidth().animateItem(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (isError) {
+                                    Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error)
+                                } else {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Scanning ${scan.subject} assignment", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(status, color = if (isError) MaterialTheme.colorScheme.error else Color.Gray, fontSize = 12.sp)
+                                }
+                                IconButton(onClick = { viewModel.cancelActiveRequest(scan.id) }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Cancel or Dismiss")
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+
+            if (filteredSolutions.isEmpty() && activeScans.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = if (filterOnlyFavorites) Icons.Default.FavoriteBorder else Icons.Default.HistoryEdu,
+                                contentDescription = "Book empty state",
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.primaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = if (filterOnlyFavorites) "No favorited saves matches" else "No saved homeworks yet",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Go back to scan, input coding or general assignments and find summaries preserved here.",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            } else if (filteredSolutions.isNotEmpty()) {
+                item {
+                    Text("Completed Solutions History", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+                }
+                
                 items(filteredSolutions, key = { it.id }) { item ->
                     val subjTheme = Subjects.find { it.id == item.subject } ?: Subjects.first()
                     Card(

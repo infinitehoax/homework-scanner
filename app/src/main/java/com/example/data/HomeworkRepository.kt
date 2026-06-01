@@ -76,7 +76,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         tutorPersonality: String = "Balanced Tutor",
         explanationComplexity: String = "Detailed Step-by-Step"
     ): HomeworkEntity = withContext(Dispatchers.IO) {
-        val finalApiKey = apiKey.ifEmpty { BuildConfig.GEMINI_API_KEY }
+        val finalApiKey = apiKey.ifEmpty { BuildConfig.RELAY_API_KEY }
         
         val personalityPromptSnippet = when(tutorPersonality) {
             "Socratic Guide" -> "Do not give the direct solution immediately. Act like Socrates: ask guiding sub-questions, lead the user with helpful hints, and encourage critical thinking."
@@ -91,136 +91,87 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
             else -> "Provide a detailed step-by-step walk-through, detailing intermediate calculations, steps, and core concepts."
         }
 
-        // Formulate a robust prompt based on the subject category
-        val subjectPromptSnippet = when (subject.lowercase()) {
-            "math" -> "Solve this Math homework. Use beautiful LaTeX math notation for all equations and fractions. Write inline equations using single dollar signs or block equations using double dollar signs."
-            "science" -> "Explain the Science question, highlighting chemical reactions, biological systems, or physical formulas in clean LaTeX formatting if equations are involved."
-            "history" -> "Explain the History topic. List critical dates, timelines, prominent figures, background contexts, and historical consequences in clean tables or bulleted lists."
-            "literature" -> "Provide a Literature analysis. Structure key points, textual quotes, author themes, and stylistic motifs in readable markdown blocks."
-            "programming" -> "Solve this programming assignment. Output tidy code blocks with language-specific syntax formatting, explanation of logic, and time/space complexity analysis."
-            else -> "Solve this assignment. Ensure proper markdown tables, bullet items, and elegant structure."
-        }
-
-        val styleInstruction = """
-            Make sure your response uses markdown. You can render markdown tables using standard syntax.
-            For inline math equations, wrap them in single dollar signs (e.g. ${"$"}E = mc^2${"$"}).
-            For complex block equations, wrap them in double dollar signs (e.g. ${"$$"}x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}${"$$"}) or Bracket notation \[ \].
-            Use generous markdown elements: Section Headers (##), lists, emphasis, and blockquotes.
-        """.trimIndent()
-
         val systemInstructionText = """
             You are "PrepAlly", an expert homework tutor.
-            Current Tutor Personality Preference: ${"$"}personalityPromptSnippet
-            Current Explanation Style/Complexity: ${"$"}complexityPromptSnippet
+            Current Tutor Personality Preference: $personalityPromptSnippet
+            Current Explanation Style/Complexity: $complexityPromptSnippet
             
             Always prioritize being deeply educational.
             Structure outputs beautifully with clearly distinguished sections.
-            ${"$"}styleInstruction
         """.trimIndent()
 
-        val promptParts = mutableListOf<Part>()
-        
-        val maxInlineBytes = 15 * 1024 * 1024 // 15 MB limit for JSON inline data
-        
-        // Include the video inline if provided natively
+        // 1. Process Video Base64 (if any)
+        var videoBase64: String? = null
         if (videoUrl != null) {
             val videoFile = java.io.File(videoUrl)
             if (videoFile.exists()) {
-                if (videoFile.length() > maxInlineBytes) {
-                    throw Exception("Video is too large. Please record a shorter video (under 15MB).")
-                }
-                try {
-                    val bytes = videoFile.readBytes()
-                    val videoBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    promptParts.add(Part(inlineData = InlineData(mimeType = "video/mp4", data = videoBase64)))
-                } catch (e: Throwable) {
-                    Log.e("HomeworkRepository", "Failed to encode video for Gemini request", e)
-                    throw Exception("Failed to process video.", e)
-                }
+                videoBase64 = android.util.Base64.encodeToString(videoFile.readBytes(), android.util.Base64.NO_WRAP)
             }
         }
 
-        // Include the audio inline if provided natively
+        // 2. Process Audio Base64 (if any)
+        var audioBase64: String? = null
         if (audioUrl != null) {
             val audioFile = java.io.File(audioUrl)
             if (audioFile.exists()) {
-                if (audioFile.length() > maxInlineBytes) {
-                    throw Exception("Audio recording is too long. Please keep it under 15MB.")
-                }
-                try {
-                    val bytes = audioFile.readBytes()
-                    val audioBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    promptParts.add(Part(inlineData = InlineData(mimeType = "audio/mp4", data = audioBase64)))
-                } catch (e: Throwable) {
-                    Log.e("HomeworkRepository", "Failed to encode audio for Gemini request", e)
-                    throw Exception("Failed to process audio.", e)
-                }
+                audioBase64 = android.util.Base64.encodeToString(audioFile.readBytes(), android.util.Base64.NO_WRAP)
             }
         }
-        
-        // Include the image context if uploaded (fallback if no video or as primary image)
-        if (imageBase64 != null) {
-            promptParts.add(Part(inlineData = InlineData(mimeType = "image/jpeg", data = imageBase64)))
-        }
 
-        // Include the text query
         val qText = questionText.ifBlank {
-            if (audioUrl != null) {
-                "Please listen to the attached voice explanation and solve/explain the assignment step-by-step."
-            } else {
-                "Scanned or attached assignment"
-            }
+            if (audioUrl != null) "Please listen to the attached voice explanation and solve/explain."
+            else "Scanned or attached assignment"
         }
-        val textPrompt = "$subjectPromptSnippet\n\nQuestion:\n$qText"
-        promptParts.add(Part(text = textPrompt))
 
-        val request = GeminiRequest(
-            contents = listOf(Content(role = "user", parts = promptParts)),
-            systemInstruction = Content(parts = listOf(Part(text = systemInstructionText)))
+        // 3. Create the Relay Request
+        // IMPORTANT: The backend accepts ONLY ONE of image_b64, video_b64, or audio_b64.
+        val request = RelayRequest(
+            subject = subject,
+            question = qText,
+            system_instruction = systemInstructionText,
+            image_b64 = if (videoBase64 == null && audioBase64 == null) imageBase64 else null,
+            video_b64 = videoBase64,
+            audio_b64 = audioBase64
         )
 
         try {
-            com.example.util.ApiLogger.info("API_REQUEST", "Sending request to Gemini model: gemini-3.5-flash with ${promptParts.size} parts.")
             val requestStartTime = System.currentTimeMillis()
-
-            val response = RetrofitClient.service.generateContent(
-                model = "gemini-3.5-flash",
+            
+            // Generate a clean log of what's being sent
+            val payloadDetails = StringBuilder()
+            payloadDetails.append("Subject: ${request.subject}\n")
+            payloadDetails.append("Question: ${request.question}\n")
+            payloadDetails.append("System Instruction: ${request.system_instruction}\n")
+            payloadDetails.append("Has Image: ${request.image_b64 != null}\n")
+            payloadDetails.append("Has Video: ${request.video_b64 != null}\n")
+            payloadDetails.append("Has Audio: ${request.audio_b64 != null}")
+            
+            com.example.util.ApiLogger.info("RELAY_REQUEST", "Sending payload to PrepAlly Relay.", payloadDetails.toString())
+            
+            val response = RetrofitClient.service.solveHomework(
                 apiKey = finalApiKey,
                 request = request
             )
             
+            if (!response.success || response.answer == null) {
+                com.example.util.ApiLogger.error("RELAY_ERROR", "Server returned false success or null answer", response.error_msg)
+                throw Exception(response.error_msg ?: "AI services failed to return a response.")
+            }
+
             val duration = System.currentTimeMillis() - requestStartTime
-            com.example.util.ApiLogger.info("API_RESPONSE", "Received successful response in ${duration}ms")
+            com.example.util.ApiLogger.info("RELAY_RESPONSE", "Success using provider: ${response.provider_used} in ${duration}ms", "Answer Preview:\n${response.answer.take(200)}...")
 
-            val answerText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: throw Exception("The AI could not generate an answer. The prompt may have been blocked by safety filters.")
-
-            val entity = HomeworkEntity(
+            HomeworkEntity(
                 subject = subject,
                 questionText = questionText.ifEmpty { "Scanned assignment" },
                 imageUrl = imageUrl,
                 videoUrl = videoUrl,
                 audioUrl = audioUrl,
-                solutionText = answerText,
+                solutionText = response.answer,
                 timestamp = System.currentTimeMillis()
             )
-
-            entity
-        } catch (e: HttpException) {
-            val errorBody = e.response()?.errorBody()?.string()
-            Log.e("HomeworkRepository", "API HTTP Error: $errorBody", e)
-            com.example.util.ApiLogger.error("API_HTTP_ERROR", "HTTP code ${e.code()}", errorBody ?: e.message())
-            
-            var readableMessage = "Server code ${e.code()}"
-            try {
-                if (!errorBody.isNullOrBlank()) {
-                    readableMessage = JSONObject(errorBody).getJSONObject("error").getString("message")
-                }
-            } catch (parseEx: Exception) { /* Fallback to standard message */ }
-            throw Exception(readableMessage)
         } catch (e: Exception) {
             Log.e("HomeworkRepository", "Error solving homework", e)
-            com.example.util.ApiLogger.error("API_NETWORK_ERROR", e.localizedMessage ?: "Unknown network error", e.stackTraceToString())
             throw Exception(e.localizedMessage ?: "Unknown network error occurred.")
         }
     }
@@ -230,71 +181,54 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
         followUpText: String,
         apiKey: String
     ): HomeworkEntity = withContext(Dispatchers.IO) {
-        val finalApiKey = apiKey.ifEmpty { BuildConfig.GEMINI_API_KEY }
+        val finalApiKey = apiKey.ifEmpty { BuildConfig.RELAY_API_KEY }
         val currentHistory = deserializeHistory(entity.historyJson).toMutableList()
 
-        // Append user's new question
+        // 1. Build string representation of chat history
+        val historyBuilder = StringBuilder()
+        historyBuilder.append("Original Question: ${entity.questionText}\n")
+        historyBuilder.append("Original Solution: ${entity.solutionText}\n\n")
+        historyBuilder.append("--- Chat History ---\n")
+        
+        currentHistory.forEach { msg ->
+            val role = if (msg.isUser) "Student" else "Tutor"
+            historyBuilder.append("$role: ${msg.text}\n")
+        }
+        
+        historyBuilder.append("\nStudent's new follow-up question: $followUpText")
+
         currentHistory.add(ChatMessage(isUser = true, text = followUpText))
 
-        // Construct contents array for Gemini including original context and chat log
-        val contents = mutableListOf<Content>()
-
-        // 1. Initial Prompt context
-        val initialUserParts = mutableListOf<Part>()
-        if (entity.imageUrl != null) {
-            // Reconstruct approximate image if base64 is not saved, or just rely on context
-            // Note: In typical usage, the text conversation history is more than enough for follow-ups
-        }
-        initialUserParts.add(Part(text = "Subject: ${entity.subject}\nOriginal Question:\n${entity.questionText}"))
-        contents.add(Content(role = "user", parts = initialUserParts))
-
-        // 2. Initial Solution
-        contents.add(Content(role = "model", parts = listOf(Part(text = entity.solutionText))))
-
-        // 3. Subsequent Chat Logs
-        // We exclude the last item because it is the current prompt we want to query
-        for (i in 0 until currentHistory.size - 1) {
-            val msg = currentHistory[i]
-            contents.add(
-                Content(
-                    role = if (msg.isUser) "user" else "model",
-                    parts = listOf(Part(text = msg.text))
-                )
-            )
-        }
-
-        // 4. Current user follow-up prompt
-        contents.add(Content(role = "user", parts = listOf(Part(text = followUpText))))
-
-        val systemInstructionText = "You are continuing a tutoring session with the student. Answer their follow-up questions clearly while checking for their understanding."
-
-        val request = GeminiRequest(
-            contents = contents,
-            systemInstruction = Content(parts = listOf(Part(text = systemInstructionText)))
+        val request = RelayRequest(
+            subject = entity.subject,
+            question = historyBuilder.toString(),
+            system_instruction = "You are continuing a tutoring session. Use the provided Chat History for context. Answer the student's new follow-up question clearly.",
+            image_b64 = null, video_b64 = null, audio_b64 = null
         )
 
         try {
-            val response = RetrofitClient.service.generateContent(
-                model = "gemini-3.5-flash",
-                apiKey = finalApiKey,
-                request = request
-            )
+            com.example.util.ApiLogger.info("RELAY_FOLLOWUP_REQUEST", "Sending follow up chat via Relay.", "Prompt:\n$followUpText")
+            val requestStartTime = System.currentTimeMillis()
+            val response = RetrofitClient.service.solveHomework(finalApiKey, request)
 
-            val answerText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "I couldn't generate a follow up response. Please try again."
+            if (!response.success || response.answer == null) {
+                com.example.util.ApiLogger.error("RELAY_FOLLOWUP_ERROR", "Failed to generate follow-up.", response.error_msg)
+                throw Exception(response.error_msg ?: "Failed to generate follow-up.")
+            }
 
-            // Save our follow up response to chat history
-            currentHistory.add(ChatMessage(isUser = false, text = answerText))
+            val duration = System.currentTimeMillis() - requestStartTime
+            com.example.util.ApiLogger.info("RELAY_FOLLOWUP_RESPONSE", "Success using provider: ${response.provider_used} in ${duration}ms", "Answer Preview:\n${response.answer.take(200)}...")
+
+            currentHistory.add(ChatMessage(isUser = false, text = response.answer))
 
             val updatedEntity = entity.copy(
                 historyJson = serializeHistory(currentHistory),
-                timestamp = System.currentTimeMillis() // Bump the local timestamp or leave unchanged? Usually update timestamp for sorting
+                timestamp = System.currentTimeMillis()
             )
 
             homeworkDao.updateSolution(updatedEntity)
             updatedEntity
         } catch (e: Exception) {
-            Log.e("HomeworkRepository", "Error during follow up", e)
             throw e
         }
     }

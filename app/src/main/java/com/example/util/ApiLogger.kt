@@ -32,7 +32,7 @@ object ApiLogger {
         _logs.value = currentLogs
     }
 
-    fun info(tag: String, message: String) = log("INFO", tag, message)
+    fun info(tag: String, message: String, details: String? = null) = log("INFO", tag, message, details)
     fun error(tag: String, message: String, details: String? = null) = log("ERROR", tag, message, details)
     fun clear() {
         _logs.value = emptyList()

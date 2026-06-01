@@ -73,12 +73,23 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
     private val _userApiKey = MutableStateFlow("")
     val userApiKey: StateFlow<String> = _userApiKey.asStateFlow()
 
+    data class ActiveScan(
+        val id: String = java.util.UUID.randomUUID().toString(),
+        val subject: String,
+        val timestamp: Long = System.currentTimeMillis(),
+        val status: MutableStateFlow<String> = MutableStateFlow("Queued"),
+        val isError: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    )
+
+    private val _activeScans = MutableStateFlow<List<ActiveScan>>(emptyList())
+    val activeScans: StateFlow<List<ActiveScan>> = _activeScans.asStateFlow()
+
     fun updateApiKey(newKey: String) {
         _userApiKey.value = newKey
     }
 
     fun getActiveApiKey(): String {
-        return _userApiKey.value.ifEmpty { BuildConfig.GEMINI_API_KEY }
+        return _userApiKey.value.ifEmpty { BuildConfig.RELAY_API_KEY }
     }
 
     fun isApiKeyAvailable(): Boolean {
@@ -95,11 +106,9 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
     private val _queueStatus = MutableStateFlow<String?>(null)
     val queueStatus: StateFlow<String?> = _queueStatus.asStateFlow()
 
-    fun cancelActiveRequest() {
-        activeApiJob?.cancel()
-        _isLoading.value = false
-        _queueStatus.value = null
-        _errorMessage.value = "Request manually cancelled."
+    fun cancelActiveRequest(scanId: String) {
+        // Can optionally cancel the job if we mapped jobs to ids, but for now just remove it
+        _activeScans.value = _activeScans.value.filter { it.id != scanId }
     }
 
     fun solveHomework(
@@ -109,11 +118,12 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
         videoUri: Uri? = null,
         audioPath: String? = null
     ) {
-        activeApiJob?.cancel()
-        activeApiJob = viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
-            _queueStatus.value = null
+        val activeScan = ActiveScan(subject = subject)
+        _activeScans.value = listOf(activeScan) + _activeScans.value
+
+        viewModelScope.launch {
+            activeScan.status.value = "Preparing media files..."
+            
             try {
                 var imageBase64: String? = null
                 var localImagePath: String? = null
@@ -121,6 +131,7 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
 
                 // 1. Process Image if supplied
                 if (imageUri != null) {
+                    activeScan.status.value = "Processing image..."
                     val contentResolver = getApplication<Application>().contentResolver
                     val inputStream: InputStream? = contentResolver.openInputStream(imageUri)
                     val bitmap = BitmapFactory.decodeStream(inputStream)
@@ -146,6 +157,7 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
 
                 // 2. Process Video inputs if supplied by copying locally and extracting visual frames
                 if (videoUri != null) {
+                    activeScan.status.value = "Processing video..."
                     val cr = getApplication<Application>().contentResolver
                     val cacheVideoFile = File(
                         getApplication<Application>().cacheDir,
@@ -187,8 +199,8 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                 }
 
                 if (questionText.trim().isEmpty() && imageBase64 == null && audioPath == null) {
-                    _errorMessage.value = "Please provide an assignment question, attach a photo, record a video, or record a voice explanation."
-                    _isLoading.value = false
+                    activeScan.isError.value = true
+                    activeScan.status.value = "Missing input: no question text or media."
                     return@launch
                 }
 
@@ -198,6 +210,7 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
 
                 while (isActive && !isSuccess && attempt <= maxRetries) {
                     try {
+                        activeScan.status.value = "Uploading to network and analyzing (Attempt $attempt)..."
                         val resultEntity = repository.solveHomework(
                             subject = subject,
                             questionText = questionText,
@@ -211,35 +224,37 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                         )
 
                         // Save result to Room Database
+                        activeScan.status.value = "Saving result..."
                         val solvedId = repository.saveSolution(resultEntity)
                         val savedEntity = resultEntity.copy(id = solvedId)
-
-                        _currentSolution.value = savedEntity
+                        
+                        // Clean up active scan as it's finished successfully
+                        _activeScans.value = _activeScans.value.filter { it.id != activeScan.id }
                         isSuccess = true
                     } catch (e: Exception) {
                         val errorMsg = e.localizedMessage ?: e.message ?: ""
                         if (errorMsg.contains("429") || errorMsg.contains("quota", ignoreCase = true) || errorMsg.contains("rate limit", ignoreCase = true)) {
                             val delaySeconds = (2 * attempt).coerceAtMost(10)
-                            _queueStatus.value = "Server busy. Retrying in ${delaySeconds}s... (Attempt $attempt)"
+                            activeScan.status.value = "Server busy (429). Retrying in ${delaySeconds}s..."
                             delay(delaySeconds * 1000L)
                             attempt++
                         } else {
-                            _errorMessage.value = "Server error: $errorMsg"
+                            activeScan.isError.value = true
+                            activeScan.status.value = "Server error: $errorMsg"
                             break
                         }
                     }
                 }
 
                 if (!isSuccess && attempt > maxRetries) {
-                    _errorMessage.value = "Failed after $maxRetries attempts. Please try again later."
+                    activeScan.isError.value = true
+                    activeScan.status.value = "Failed after $maxRetries attempts."
                 }
 
             } catch (e: Throwable) {
                 Log.e("HomeworkViewModel", "Failed to solve homework", e)
-                _errorMessage.value = "Error: Video may be too large, or network failed. Details: ${e.localizedMessage ?: e.message}"
-            } finally {
-                _isLoading.value = false
-                _queueStatus.value = null
+                activeScan.isError.value = true
+                activeScan.status.value = "Exception: ${e.localizedMessage ?: e.message}"
             }
         }
     }

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -196,7 +197,7 @@ fun SettingsAndLogsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
                     Text(
-                        "Gemini API Configuration",
+                        "Relay Network Configuration",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -205,7 +206,7 @@ fun SettingsAndLogsScreen(
                     OutlinedTextField(
                         value = apiKeyInput,
                         onValueChange = { apiKeyInput = it },
-                        label = { Text("Gemini API Key") },
+                        label = { Text("Relay API Key") },
                         modifier = Modifier.fillMaxWidth().testTag("api_key_input_settings"),
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation()
@@ -225,8 +226,23 @@ fun SettingsAndLogsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("Diagnostic API Logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = { ApiLogger.clear() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Clear Logs", tint = MaterialTheme.colorScheme.error)
+                Row {
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    IconButton(onClick = { 
+                        val allLogs = logs.joinToString("\n\n") { "${it.formattedTime} [${it.level}] ${it.tag}: ${it.message}${if(it.details != null) "\n" + it.details else ""}" }
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, allLogs)
+                            type = "text/plain"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, null)
+                        context.startActivity(shareIntent)
+                    }) {
+                        Icon(Icons.Default.Share, contentDescription = "Export Logs", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { ApiLogger.clear() }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Clear Logs", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
