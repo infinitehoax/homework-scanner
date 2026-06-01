@@ -67,6 +67,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
 
     suspend fun solveHomework(
         subject: String,
+        folderName: String?,
         questionText: String,
         imageBase64: String?,
         imageUrl: String?,
@@ -163,6 +164,7 @@ class HomeworkRepository(private val homeworkDao: HomeworkDao) {
 
             HomeworkEntity(
                 subject = subject,
+                folderName = folderName,
                 questionText = questionText.ifEmpty { "Scanned assignment" },
                 imageUrl = imageUrl,
                 videoUrl = videoUrl,

@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 data class HomeworkEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val subject: String,
+    val folderName: String? = null,
     val questionText: String,
     val imageUrl: String? = null,
     val videoUrl: String? = null,

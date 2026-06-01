@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.example.util.ApiLogger
 import com.example.util.LogEntry
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsAndLogsScreen(
     viewModel: HomeworkViewModel,
@@ -72,10 +72,8 @@ fun SettingsAndLogsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     val personalities = listOf("Balanced Tutor", "Socratic Guide", "Strict Examiner", "Casual Buddy")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                    androidx.compose.foundation.layout.FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         personalities.forEach { p ->
@@ -109,10 +107,8 @@ fun SettingsAndLogsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     val complexities = listOf("Detailed Step-by-Step", "Focus Formulas", "Quick Cheat Sheet")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                    androidx.compose.foundation.layout.FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         complexities.forEach { c ->
@@ -136,56 +132,42 @@ fun SettingsAndLogsScreen(
             val context = androidx.compose.ui.platform.LocalContext.current
             var showResetConfirmation by remember { mutableStateOf(false) }
             
-            if (!showResetConfirmation) {
-                OutlinedButton(
-                    onClick = { showResetConfirmation = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                    modifier = Modifier.fillMaxWidth().testTag("clear_all_history_trigger")
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Delete, "Sweep")
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Wipe All Tutoring Saves", fontWeight = FontWeight.Bold)
-                    }
+            OutlinedButton(
+                onClick = { showResetConfirmation = true },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                modifier = Modifier.fillMaxWidth().testTag("clear_all_history_trigger")
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Delete, "Sweep")
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Wipe All Tutoring Saves", fontWeight = FontWeight.Bold)
                 }
-            } else {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            "Delete alright? This will clean all offline homework records irreversibly.",
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
+            }
+            
+            if (showResetConfirmation) {
+                AlertDialog(
+                    onDismissRequest = { showResetConfirmation = false },
+                    title = { Text("Wipe All Saves") },
+                    text = { Text("Are you sure? This will delete all offline homework records irreversibly.") },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                viewModel.clearAllHistory()
+                                showResetConfirmation = false
+                                android.widget.Toast.makeText(context, "Saves wiped cleanly!", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         ) {
-                            TextButton(onClick = { showResetConfirmation = false }) {
-                                Text("Cancel")
-                            }
-                            Button(
-                                onClick = {
-                                    viewModel.clearAllHistory()
-                                    showResetConfirmation = false
-                                    android.widget.Toast.makeText(context, "Saves wiped cleanly!", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Text("Yes, Delete All")
-                            }
+                            Text("Delete All")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showResetConfirmation = false }) {
+                            Text("Cancel")
                         }
                     }
-                }
+                )
             }
         }
 

@@ -113,6 +113,7 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
 
     fun solveHomework(
         subject: String,
+        folderName: String?,
         questionText: String,
         imageUri: Uri?,
         videoUri: Uri? = null,
@@ -121,7 +122,8 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
         val activeScan = ActiveScan(subject = subject)
         _activeScans.value = listOf(activeScan) + _activeScans.value
 
-        viewModelScope.launch {
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             activeScan.status.value = "Preparing media files..."
             
             try {
@@ -144,8 +146,9 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                         val bytes = out.toByteArray()
                         imageBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
+                        val mediaDir = getApplication<Application>().getDir("HomeworkMedia", android.content.Context.MODE_PRIVATE)
                         val cacheFile = File(
-                            getApplication<Application>().cacheDir,
+                            mediaDir,
                             "hw_scan_${System.currentTimeMillis()}.jpg"
                         )
                         cacheFile.outputStream().use { fos ->
@@ -159,8 +162,9 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                 if (videoUri != null) {
                     activeScan.status.value = "Processing video..."
                     val cr = getApplication<Application>().contentResolver
+                    val mediaDir = getApplication<Application>().getDir("HomeworkMedia", android.content.Context.MODE_PRIVATE)
                     val cacheVideoFile = File(
-                        getApplication<Application>().cacheDir,
+                        mediaDir,
                         "hw_video_${System.currentTimeMillis()}.mp4"
                     )
                     try {
@@ -186,8 +190,9 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                         imageBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
                         if (localImagePath == null) {
+                            val mediaDir = getApplication<Application>().getDir("HomeworkMedia", android.content.Context.MODE_PRIVATE)
                             val cacheFile = File(
-                                getApplication<Application>().cacheDir,
+                                mediaDir,
                                 "hw_scan_${System.currentTimeMillis()}.jpg"
                             )
                             cacheFile.outputStream().use { fos ->
@@ -206,13 +211,14 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
 
                 var attempt = 1
                 var isSuccess = false
-                val maxRetries = 10
+                val maxRetries = Int.MAX_VALUE
 
-                while (isActive && !isSuccess && attempt <= maxRetries) {
+                while (!isSuccess && attempt <= maxRetries) {
                     try {
                         activeScan.status.value = "Uploading to network and analyzing (Attempt $attempt)..."
                         val resultEntity = repository.solveHomework(
                             subject = subject,
+                            folderName = folderName,
                             questionText = questionText,
                             imageBase64 = imageBase64,
                             imageUrl = localImagePath,
@@ -226,23 +232,17 @@ class HomeworkViewModel(application: Application) : AndroidViewModel(application
                         // Save result to Room Database
                         activeScan.status.value = "Saving result..."
                         val solvedId = repository.saveSolution(resultEntity)
-                        val savedEntity = resultEntity.copy(id = solvedId)
                         
                         // Clean up active scan as it's finished successfully
                         _activeScans.value = _activeScans.value.filter { it.id != activeScan.id }
                         isSuccess = true
                     } catch (e: Exception) {
                         val errorMsg = e.localizedMessage ?: e.message ?: ""
-                        if (errorMsg.contains("429") || errorMsg.contains("quota", ignoreCase = true) || errorMsg.contains("rate limit", ignoreCase = true)) {
-                            val delaySeconds = (2 * attempt).coerceAtMost(10)
-                            activeScan.status.value = "Server busy (429). Retrying in ${delaySeconds}s..."
-                            delay(delaySeconds * 1000L)
-                            attempt++
-                        } else {
-                            activeScan.isError.value = true
-                            activeScan.status.value = "Server error: $errorMsg"
-                            break
-                        }
+                        // 429 means server busy or network issues, or just a random error. We will retry everything.
+                        val delaySeconds = (2 * attempt).coerceAtMost(30)
+                        activeScan.status.value = "Network or Server hiccup. Retrying in ${delaySeconds}s... (Attempt $attempt)"
+                        delay(delaySeconds * 1000L)
+                        attempt++
                     }
                 }
 

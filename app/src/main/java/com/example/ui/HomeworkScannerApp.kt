@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -310,6 +311,7 @@ fun ScannerTab(
 ) {
     val context = LocalContext.current
     var selectedSubject by remember { mutableStateOf("Math") }
+    var folderName by remember { mutableStateOf("") }
     var questionText by remember { mutableStateOf("") }
     
     // Captured photo Uri state
@@ -322,6 +324,7 @@ fun ScannerTab(
     var audioFile by remember { mutableStateOf<java.io.File?>(null) }
     val audioRecorder = remember(context) { AudioRecorder(context) }
     var isRecordingAudio by remember { mutableStateOf(false) }
+    var isPausedAudio by remember { mutableStateOf(false) }
     val audioPlayer = remember(context) { AudioPlayer(context) }
     var isPlayingAudioPreview by remember { mutableStateOf(false) }
     val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -407,19 +410,20 @@ fun ScannerTab(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp, top = 24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
-            shape = RoundedCornerShape(16.dp)
+                .padding(bottom = 24.dp, top = 24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(56.dp)
                         .background(activeSubjectConfig.primaryColor, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -427,19 +431,20 @@ fun ScannerTab(
                         imageVector = activeSubjectConfig.icon,
                         contentDescription = "Subject Icon",
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(20.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         "Solving in ${activeSubjectConfig.name}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "Take a photo or type details to begin instant explanation.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -490,22 +495,22 @@ fun ScannerTab(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                .padding(bottom = 20.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (imageUri != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .height(200.dp)
+                            .clip(RoundedCornerShape(16.dp))
                             .background(Color.DarkGray)
                     ) {
                         AsyncImage(
@@ -645,20 +650,9 @@ fun ScannerTab(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
-                        onClick = {
-                            try {
-                                hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                            } catch (e: Exception) {}
-                            if (isRecordingAudio) {
-                                val file = audioRecorder.stopRecording()
-                                isRecordingAudio = false
-                                if (file != null && file.exists()) {
-                                    audioFile = file
-                                    videoUri = null
-                                    imageUri = null
-                                }
-                            } else {
+                    if (!isRecordingAudio) {
+                        Button(
+                            onClick = {
                                 val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(
                                     context,
                                     android.Manifest.permission.RECORD_AUDIO
@@ -667,6 +661,7 @@ fun ScannerTab(
                                     val file = audioRecorder.startRecording()
                                     if (file != null) {
                                         isRecordingAudio = true
+                                        isPausedAudio = false
                                         audioFile = file
                                         videoUri = null
                                         imageUri = null
@@ -676,25 +671,78 @@ fun ScannerTab(
                                 } else {
                                     micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                 }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .testTag("audio_record_toggle_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
-                        )
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                        ) {
+                            Icon(Icons.Default.Mic, contentDescription = "Voice Input")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Record Voice Explanation", fontSize = 14.sp)
+                        }
+                    } else {
+                        // While recording
+                        Button(
+                            onClick = {
+                                if (isPausedAudio) {
+                                    audioRecorder.resumeRecording()
+                                    isPausedAudio = false
+                                } else {
+                                    audioRecorder.pauseRecording()
+                                    isPausedAudio = true
+                                }
+                            },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                        ) {
+                            Icon(if (isPausedAudio) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = "Toggle Pause")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (isPausedAudio) "Resume" else "Pause", fontSize = 12.sp)
+                        }
+                        
+                        Button(
+                            onClick = {
+                                val file = audioRecorder.stopRecording()
+                                isRecordingAudio = false
+                                isPausedAudio = false
+                                if (file != null && file.exists()) {
+                                    audioFile = file
+                                    videoUri = null
+                                    imageUri = null
+                                }
+                            },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = "Stop Voice")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Stop", fontSize = 12.sp)
+                        }
+                    }
+                }
+                
+                if (isRecordingAudio) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
-                                contentDescription = if (isRecordingAudio) "Stop Voice" else "Voice Input"
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isRecordingAudio) "Recording Audio... Tap to Stop" else "Record Voice Explanation",
-                                fontSize = 11.sp
+                        Text(if (isPausedAudio) "Paused" else "Recording...", color = if (isPausedAudio) Color.Gray else MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp))
+                        
+                        val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition()
+                        val animationSpec = androidx.compose.animation.core.infiniteRepeatable<Float>(
+                            animation = androidx.compose.animation.core.tween(500, easing = androidx.compose.animation.core.LinearEasing),
+                            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                        )
+                        for (i in 0..8) {
+                            val target = if (isPausedAudio) 8f else (15..36).random().toFloat()
+                            val h by infiniteTransition.animateFloat(initialValue = 8f, targetValue = target, animationSpec = animationSpec)
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 2.dp)
+                                    .width(4.dp)
+                                    .height(h.dp)
+                                    .background(if (isPausedAudio) Color.Gray else MaterialTheme.colorScheme.error, RoundedCornerShape(2.dp))
                             )
                         }
                     }
@@ -821,17 +869,17 @@ fun ScannerTab(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 24.dp),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                .padding(bottom = 32.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Text(
                     "Optional Text Details / Question Prompt",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
 
                 OutlinedTextField(
@@ -840,14 +888,33 @@ fun ScannerTab(
                     placeholder = {
                         Text(
                             "Type your specific equations, paragraphs, coding questions, or explain what topic you want to check (e.g. explain step-by-step)",
-                            fontSize = 13.sp
+                            fontSize = 14.sp
                         )
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(110.dp)
+                        .height(130.dp)
                         .testTag("homework_question_input"),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = activeSubjectConfig.primaryColor,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = folderName,
+                    onValueChange = { folderName = it },
+                    placeholder = { Text("Folder/Topic Name (Optional, e.g. Calculus 101)", fontSize = 14.sp) },
+                    modifier = Modifier.fillMaxWidth().testTag("homework_folder_input"),
+                    shape = RoundedCornerShape(16.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = activeSubjectConfig.primaryColor,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                    )
                 )
             }
         }
@@ -857,6 +924,7 @@ fun ScannerTab(
             onClick = {
                 viewModel.solveHomework(
                     subject = selectedSubject,
+                    folderName = folderName.takeIf { it.isNotBlank() },
                     questionText = questionText,
                     imageUri = imageUri,
                     videoUri = videoUri,
@@ -866,21 +934,26 @@ fun ScannerTab(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
+                .height(60.dp)
                 .testTag("solve_homework_button"),
             colors = ButtonDefaults.buttonColors(containerColor = activeSubjectConfig.primaryColor),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(percent = 50),
+            elevation = ButtonDefaults.buttonElevation(
+                defaultElevation = 6.dp, 
+                pressedElevation = 2.dp
+            )
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                Icon(Icons.Default.AutoFixHigh, "Solve Assignment")
-                Spacer(modifier = Modifier.width(8.dp))
+                Icon(Icons.Default.AutoFixHigh, "Solve Assignment", modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     "Ask PrepAlly to Tutor",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+                    fontWeight = FontWeight.Black,
+                    fontSize = 18.sp,
+                    letterSpacing = 0.5.sp
                 )
             }
         }
@@ -1036,6 +1109,23 @@ fun SolutionTab(
                             fontSize = 12.sp,
                             color = Color.DarkGray
                         )
+                    }
+
+                    // Share Solution Option
+                    val context = LocalContext.current
+                    IconButton(
+                        onClick = {
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, "PrepAlly Solution for ${activeSolution.subject}:\n\n${activeSolution.solutionText}")
+                                type = "text/plain"
+                            }
+                            val shareIntent = android.content.Intent.createChooser(sendIntent, null)
+                            context.startActivity(shareIntent)
+                        },
+                        modifier = Modifier.testTag("share_solution")
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "Share")
                     }
 
                     // Save Favorite option
@@ -1456,9 +1546,21 @@ fun SavesTab(
                     Text("Completed Solutions History", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
                 }
                 
-                items(filteredSolutions, key = { it.id }) { item ->
-                    val subjTheme = Subjects.find { it.id == item.subject } ?: Subjects.first()
-                    Card(
+                val groupedSolutions = filteredSolutions.groupBy { it.folderName?.takeIf { f -> f.isNotBlank() } ?: it.subject }
+                
+                groupedSolutions.forEach { (folderKey, solutionsInFolder) ->
+                    item {
+                        Text(
+                            text = "📁 $folderKey",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    items(solutionsInFolder, key = { it.id }) { item ->
+                        val subjTheme = Subjects.find { it.id == item.subject } ?: Subjects.first()
+                        Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSolutionSelected(item) }
@@ -1577,10 +1679,11 @@ fun SavesTab(
                         }
                     }
                 }
-            }
-        }
-    }
-}
+                } // Closes forEach folder loop
+            } // Closes else if
+        } // Closes LazyColumn
+    } // Closes Column
+} // Closes SavesTab
 
 // Render dynamic Markdown and LaTeX equations beautifully
 fun colorToHex(color: Color): String {
